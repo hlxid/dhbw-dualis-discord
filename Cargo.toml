@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 dotenv = "0.15.0"
 reqwest = { version = "0.11.10", features = ["blocking", "cookies"] }
+scraper = "0.12.0"
+regex = "1.5.5"
