@@ -62,10 +62,7 @@ fn login(client: &Client) -> Result<String, Box<dyn std::error::Error>> {
     let status = response.status();
     let refresh_header = response
         .headers()
-        .get("REFRESH")
-        .unwrap()
-        .to_str()?
-        .to_string();
+        .get("REFRESH").ok_or("No refresh header found").cloned();
     let content = response.text()?;
 
     if !status.is_success() || content.len() > 500 {
@@ -77,6 +74,9 @@ fn login(client: &Client) -> Result<String, Box<dyn std::error::Error>> {
     }
 
     println!("Login successful!");
+
+    let refresh_header = refresh_header?;
+    let refresh_header = refresh_header.to_str()?;
 
     // TODO: unuglify this constant substring
     Ok(refresh_header[84..].to_string())
