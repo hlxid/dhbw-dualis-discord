@@ -1,9 +1,13 @@
+use std::{path::Path, fs::File, io::BufReader};
+
 use dotenv::dotenv;
 use regex::Regex;
 use reqwest::blocking::{Client, ClientBuilder};
 use scraper::{Html, Selector, ElementRef};
+use serde::{Serialize, Deserialize};
 
 const BASE_URL: &str = "https://dualis.dhbw.de";
+const FILE_PATH: &str = "./dualis_results.json";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv()?;
@@ -13,9 +17,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result_html = fetch_results(&client, &auth_arguments)?;
     let results = parse_results(&result_html);
 
-    for result in results {
-        println!("Id: {}, Name: {}, scored: {}", result.course_id, result.course_name, result.scored);
+    for result in results.iter() {
+        println!("id: {}, name: {}, scored: {}", result.course_id, result.course_name, result.scored);
     }
+
+    let old_results = load_results();
+    if old_results.is_some() {
+        diff_results(&old_results.unwrap(), &results);
+    } else {
+        println!("No saved results found. Not looking for changes.");
+    }
+
+    save_results(&results)?;
 
     Ok(())
 }
@@ -92,7 +105,7 @@ fn fetch_results(
     Ok(content)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct CourseResult {
     course_id: String,
     course_name: String,
@@ -112,12 +125,12 @@ impl CourseResult {
 fn parse_results(result_html: &str) -> Vec<CourseResult> {
     println!("Parsing results...");
     let document = Html::parse_document(result_html);
-    println!("Successfully Parsed results.");
-
     let mut results = Vec::new();
+
     let course_name_replace_regex = Regex::new("<!--.+-->").unwrap();
-    
     let table_rows_selector = Selector::parse("tbody tr").unwrap();
+    let img_selector = Selector::parse("img").unwrap();
+
     let table_rows = document.select(&table_rows_selector);
     for row in table_rows {
         // Filter useless rows
@@ -140,7 +153,9 @@ fn parse_results(result_html: &str) -> Vec<CourseResult> {
         // Initial parsing:
         let course_id: String = cells[0].text().collect();
         let course_name: String = cells[1].text().map(|text_part| text_part.trim()).collect();
-        let scored = cells[5].value().attr("title").unwrap_or("offen").to_lowercase() != "offen";
+
+        let title = cells[5].select(&img_selector).next().map(|img| img.value().attr("title").unwrap_or("offen"));
+        let scored = title.unwrap_or("offen").to_lowercase() != "offen";
 
         // Value fixing:
         // Dualis is so bad that they use xml/html comments inside a script tag LMAO
@@ -152,6 +167,51 @@ fn parse_results(result_html: &str) -> Vec<CourseResult> {
         results.push(course_result);
     }
 
+    println!("Successfully parsed {} results!", results.len());
     results
 }
 
+fn load_results() -> Option<Vec<CourseResult>> {
+    let path = Path::new(FILE_PATH);
+    if !path.exists() {
+        return None;
+    }
+
+    let file = File::open(path).unwrap();
+    let reader = BufReader::new(file);
+    let results: Vec<CourseResult> = serde_json::from_reader(reader).unwrap();
+
+    println!("Successfully loaded {} results!", results.len());
+    Some(results)
+}
+
+fn save_results(results: &[CourseResult]) -> Result<(), Box<dyn std::error::Error>> {
+    let json = serde_json::to_string(&results)?;
+    std::fs::write(FILE_PATH, json)?;
+    println!("Successfully saved results to {FILE_PATH}.");
+
+    Ok(())
+}
+
+fn diff_results(old: &[CourseResult], new: &[CourseResult]) {
+    println!("Looking for newly scored courses...");
+    let mut count = 0;
+
+    for entry in new {
+        let old_entry = old.iter().find(|old_entry| old_entry.course_id == entry.course_id);
+        if old_entry.is_none() {
+            continue;
+        }
+
+        if entry.scored && !old_entry.unwrap().scored {
+            count += 1;
+            handle_newly_scored_course(entry)
+        }
+    }
+
+    println!("Found {} newly scored courses!", count);
+}
+
+fn handle_newly_scored_course(cr: &CourseResult) {
+    println!("Newly scored: {}", cr.course_name);
+}
