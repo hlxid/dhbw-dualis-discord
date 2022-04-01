@@ -1,10 +1,10 @@
-use std::{path::Path, fs::File, io::BufReader};
+use std::{fs::File, io::BufReader, path::Path};
 
 use dotenv::dotenv;
 use regex::Regex;
 use reqwest::blocking::{Client, ClientBuilder};
-use scraper::{Html, Selector, ElementRef};
-use serde::{Serialize, Deserialize};
+use scraper::{ElementRef, Html, Selector};
+use serde::{Deserialize, Serialize};
 
 const BASE_URL: &str = "https://dualis.dhbw.de";
 const FILE_PATH: &str = "./dualis_results.json";
@@ -18,12 +18,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results = parse_results(&result_html);
 
     for result in results.iter() {
-        println!("id: {}, name: {}, scored: {}", result.course_id, result.course_name, result.scored);
+        println!(
+            "id: {}, name: {}, scored: {}",
+            result.course_id, result.course_name, result.scored
+        );
     }
 
     let old_results = load_results();
-    if old_results.is_some() {
-        diff_results(&old_results.unwrap(), &results);
+    if let Some(old_results) = old_results {
+        let changes = diff_results(&old_results, &results);
+        for change in changes {
+            handle_newly_scored_course(change)
+        }
     } else {
         println!("No saved results found. Not looking for changes.");
     }
@@ -62,7 +68,9 @@ fn login(client: &Client) -> Result<String, Box<dyn std::error::Error>> {
     let status = response.status();
     let refresh_header = response
         .headers()
-        .get("REFRESH").ok_or("No refresh header found").cloned();
+        .get("REFRESH")
+        .ok_or("No refresh header found")
+        .cloned();
     let content = response.text()?;
 
     if !status.is_success() || content.len() > 500 {
@@ -105,7 +113,7 @@ fn fetch_results(
     Ok(content)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 struct CourseResult {
     course_id: String,
     course_name: String,
@@ -146,7 +154,13 @@ fn parse_results(result_html: &str) -> Vec<CourseResult> {
             continue;
         }
 
-        if cells.iter().any(|cell| !cell.value().attr("class").unwrap_or_default().contains("tbdata")) {
+        if cells.iter().any(|cell| {
+            !cell
+                .value()
+                .attr("class")
+                .unwrap_or_default()
+                .contains("tbdata")
+        }) {
             continue;
         }
 
@@ -154,15 +168,20 @@ fn parse_results(result_html: &str) -> Vec<CourseResult> {
         let course_id: String = cells[0].text().collect();
         let course_name: String = cells[1].text().map(|text_part| text_part.trim()).collect();
 
-        let title = cells[5].select(&img_selector).next().map(|img| img.value().attr("title").unwrap_or("offen"));
+        let title = cells[5]
+            .select(&img_selector)
+            .next()
+            .map(|img| img.value().attr("title").unwrap_or("offen"));
         let scored = title.unwrap_or("offen").to_lowercase() != "offen";
 
         // Value fixing:
         // Dualis is so bad that they use xml/html comments inside a script tag LMAO
         // Replace line endings so everything is a single line for the regex.
         let course_name = course_name.replace('\n', "");
-        let course_name= course_name_replace_regex.replace_all(&course_name, "").to_string();
-        
+        let course_name = course_name_replace_regex
+            .replace_all(&course_name, "")
+            .to_string();
+
         let course_result = CourseResult::new(course_id, course_name, scored);
         results.push(course_result);
     }
@@ -193,25 +212,89 @@ fn save_results(results: &[CourseResult]) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-fn diff_results(old: &[CourseResult], new: &[CourseResult]) {
+fn diff_results<'a>(old: &[CourseResult], new: &'a [CourseResult]) -> Vec<&'a CourseResult> {
     println!("Looking for newly scored courses...");
-    let mut count = 0;
+    let mut changed = vec![];
 
     for entry in new {
-        let old_entry = old.iter().find(|old_entry| old_entry.course_id == entry.course_id);
+        let old_entry = old
+            .iter()
+            .find(|old_entry| old_entry.course_id == entry.course_id);
         if old_entry.is_none() {
             continue;
         }
 
         if entry.scored && !old_entry.unwrap().scored {
-            count += 1;
-            handle_newly_scored_course(entry)
+            changed.push(entry);
         }
     }
 
-    println!("Found {} newly scored courses!", count);
+    println!("Found {} newly scored courses!", changed.len());
+    changed
 }
 
 fn handle_newly_scored_course(cr: &CourseResult) {
     println!("Newly scored: {}", cr.course_name);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_results() {
+        let html = include_str!("../test_data/results.html");
+        let results = parse_results(html);
+        assert_eq!(results.len(), 23);
+
+        assert_eq!(
+            results,
+            vec![
+                CourseResult::new("T3INF1001".to_string(), "Mathematik I".to_string(), false),
+                CourseResult::new("T3INF1002".to_string(), "Theoretische Informatik I".to_string(), true),
+                CourseResult::new("T3INF1003".to_string(), "Theoretische Informatik II".to_string(), false),
+                CourseResult::new("T3INF1004".to_string(), "Programmieren".to_string(), false),
+                CourseResult::new("T3INF1005".to_string(), "Schlüsselqualifikationen".to_string(), false),
+                CourseResult::new("T3INF1006".to_string(), "Technische Informatik I".to_string(), false),
+                CourseResult::new("T3INF2001".to_string(), "Mathematik II".to_string(), false),
+                CourseResult::new("T3INF2002".to_string(), "Theoretische Informatik III".to_string(), false),
+                CourseResult::new("T3INF2003".to_string(), "Software Engineering I".to_string(), false),
+                CourseResult::new("T3INF2004".to_string(), "Datenbanken".to_string(), false),
+                CourseResult::new("T3INF2005".to_string(), "Technische Informatik II".to_string(), false),
+                CourseResult::new("T3INF2006".to_string(), "Kommunikations- und Netztechnik".to_string(), false),
+                CourseResult::new("T3INF3001".to_string(), "Software Engineering II".to_string(), false),
+                CourseResult::new("T3INF3002".to_string(), "IT-Sicherheit".to_string(), false),
+                CourseResult::new("T3_3101".to_string(), "Studienarbeit".to_string(), false),
+                CourseResult::new("T3_1000".to_string(), "Praxisprojekt I".to_string(), false),
+                CourseResult::new("T3_2000".to_string(), "Praxisprojekt II".to_string(), false),
+                CourseResult::new("T3_3000".to_string(), "Praxisprojekt III".to_string(), false),
+                CourseResult::new("T3INF4101".to_string(), "Web Engineering".to_string(), false),
+                CourseResult::new("T3INF4103".to_string(), "Anwendungsprojekt Informatik".to_string(), false),
+                CourseResult::new("T3INF4305".to_string(), "Softwarequalität und Verteilte Systeme".to_string(), false),
+                CourseResult::new("T3INF4304".to_string(), "Datenbanken II".to_string(), false),
+                CourseResult::new("T3_3300".to_string(), "Bachelorarbeit".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff_results() {
+        let old = vec![
+            CourseResult::new("1".to_string(), "Test".to_string(), false),
+            CourseResult::new("2".to_string(), "Test".to_string(), false),
+            CourseResult::new("3".to_string(), "Test".to_string(), false),
+            CourseResult::new("4".to_string(), "Test".to_string(), false),
+            CourseResult::new("5".to_string(), "Test".to_string(), false),
+        ];
+        let new = vec![
+            CourseResult::new("1".to_string(), "Test".to_string(), true),
+            CourseResult::new("2".to_string(), "Test".to_string(), false),
+            CourseResult::new("3".to_string(), "Test".to_string(), false),
+            CourseResult::new("4".to_string(), "Test".to_string(), false),
+            CourseResult::new("5".to_string(), "Test".to_string(), false),
+        ];
+        let changed = diff_results(&old, &new);
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0], &CourseResult::new("1".to_string(), "Test".to_string(), true));
+    }
 }
