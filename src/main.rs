@@ -5,43 +5,18 @@ use reqwest::blocking::{Client, ClientBuilder};
 use scraper::{ElementRef, Html, Selector};
 
 mod results;
-use results::{CourseResult, save_results, diff_results, load_results};
+use results::{diff_results, load_results, save_results, CourseResult};
 
 const BASE_URL: &str = "https://dualis.dhbw.de";
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv()?;
-
-    let client = ClientBuilder::new().cookie_store(true).build()?;
-    let auth_arguments = login(&client)?;
-    let result_html = fetch_results(&client, &auth_arguments)?;
-    let results = parse_results(&result_html);
-
-    for result in results.iter() {
-        println!(
-            "id: {}, name: {}, scored: {}",
-            result.course_id, result.course_name, result.scored
-        );
-    }
-
-    let old_results = load_results();
-    if let Some(old_results) = old_results {
-        let changes = diff_results(&old_results, &results);
-        for change in changes {
-            handle_newly_scored_course(change)
-        }
-    } else {
-        println!("No saved results found. Not looking for changes.");
-    }
-
-    save_results(&results)?;
-
-    Ok(())
+struct Semester {
+    id: String,
+    name: String,
 }
 
 fn login(client: &Client) -> Result<String, Box<dyn std::error::Error>> {
     println!("Logging in...");
-    let url = format!("{}/scripts/mgrqispi.dll", BASE_URL);
+    let url = format!("{BASE_URL}/scripts/mgrqispi.dll");
 
     let username = std::env::var("DUALIS_EMAIL")?;
     let password = std::env::var("DUALIS_PASSWORD")?;
@@ -74,53 +49,149 @@ fn login(client: &Client) -> Result<String, Box<dyn std::error::Error>> {
     let content = response.text()?;
 
     if !status.is_success() || content.len() > 500 {
-        return Err(format!(
-            "Login failed. Please check your credentials. Status code: {}",
-            status
-        )
-        .into());
+        return Err(
+            format!("Login failed. Please check your credentials. Status code: {status}").into(),
+        );
     }
 
     println!("Login successful!");
 
-    let refresh_header = refresh_header?;
-    let refresh_header = refresh_header.to_str()?;
+    let refresh_header = refresh_header?.to_str()?[84..] // TODO: unuglify this constant substring
+        .to_string()
+        .replace("-N000000000000000", "");
 
-    // TODO: unuglify this constant substring
-    Ok(refresh_header[84..].to_string())
+    Ok(refresh_header)
 }
 
-fn fetch_results(
+fn fetch_overview(
     client: &Client,
     auth_arguments: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    println!("Fetching results...");
-    let url = format!(
-        "{}/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=STUDENT_RESULT&ARGUMENTS={}",
-        BASE_URL, auth_arguments
-    );
+    println!("Fetching overview...");
+    let url = format!("{BASE_URL}/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=COURSERESULTS&ARGUMENTS={auth_arguments}");
 
     let response = client.get(url).send()?;
     let status = response.status();
     let content = response.text()?;
 
     if !status.is_success() || content.len() < 500 {
-        return Err("Failed to fetch results.".into());
+        return Err("Failed to fetch overview.".into());
     }
 
-    println!("Successfully fetched results!");
+    println!("Successfully fetched overview!");
 
     Ok(content)
 }
 
-fn parse_results(result_html: &str) -> Vec<CourseResult> {
-    println!("Parsing results...");
-    let document = Html::parse_document(result_html);
+fn fetch_semester_details(
+    client: &Client,
+    auth_arguments: &str,
+    semester: &Semester,
+) -> Result<String, Box<dyn std::error::Error>> {
+    println!("Fetching result details of semester {} ({})...", semester.name, semester.id);
+
+    let url = format!("{BASE_URL}/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=COURSERESULTS&ARGUMENTS={auth_arguments}-N{}", semester.id);
+
+    let response = client.get(url).send()?;
+    let status = response.status();
+    let content = response.text()?;
+
+    if !status.is_success() || content.len() < 500 {
+        return Err("Failed to fetch result details.".into());
+    }
+
+    println!(
+        "Successfully fetched result details of semester {}!",
+        semester.name
+    );
+
+    Ok(content)
+}
+
+fn fetch_course_results(client: &Client, path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let url = format!("{BASE_URL}{path}");
+    let response = client.get(url).send()?;
+    let status = response.status();
+    let content = response.text()?;
+
+    if !status.is_success() || content.len() < 500 {
+        return Err("Failed to fetch course results.".into());
+    }
+
+    Ok(content)
+}
+
+fn parse_semesters(overview_html: &str) -> Vec<Semester> {
+    println!("Parsing semesters...");
+    let document = Html::parse_document(overview_html);
+
+    let semester_selector = Selector::parse("select#semester").unwrap();
+    let semester_options_selector = Selector::parse("option").unwrap();
+    let semester_select = document.select(&semester_selector).next();
+
+    let semesters = if let Some(semester_select) = semester_select {
+        semester_select
+            .select(&semester_options_selector)
+            .map(|semester_option| {
+                let id = semester_option.value().attr("value").unwrap_or_default();
+                let name = semester_option.text().collect();
+                Semester {
+                    id: id.into(),
+                    name,
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    println!("Successfully parsed {} semesters!", semesters.len());
+    semesters
+}
+
+fn parse_semester_details(details_html: &str) -> Vec<String> {
+    let document = Html::parse_document(details_html);
+
+    let selector = Selector::parse("td.tbdata a").unwrap();
+    let a_tags = document.select(&selector);
+
+    a_tags
+        .map(|tag| tag.value().attr("href"))
+        .flatten()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
+    // Selectors/Regex
+    let table_rows_selector = Selector::parse("table tr").unwrap();
+    let cell_selector = Selector::parse("td").unwrap();
+    let h1_selector = Selector::parse("h1").unwrap();
+    let course_id_regex = Regex::new(r"[A-Z0-9]+[0-9]{4}(\.[0-9]{1,2})?").unwrap();
+
+    let document = Html::parse_document(results_html);
     let mut results = Vec::new();
 
-    let course_name_replace_regex = Regex::new("<!--.+-->").unwrap();
-    let table_rows_selector = Selector::parse("tbody tr").unwrap();
-    let img_selector = Selector::parse("img").unwrap();
+    let main_course_name_full: String = document
+        .select(&h1_selector)
+        .next()
+        .unwrap()
+        .text()
+        .collect();
+    let main_course_name_full = main_course_name_full.replace('\n', "").trim().to_owned();
+    let main_course_id = course_id_regex
+        .find(&main_course_name_full)
+        .unwrap()
+        .as_str()
+        .trim()
+        .to_owned();
+    let main_course_name = course_id_regex
+        .replace_all(&main_course_name_full, "")
+        .trim()
+        .to_owned();
+
+    let mut sub_course_id = None;
+    let mut sub_course_name = String::default();
 
     let table_rows = document.select(&table_rows_selector);
     for row in table_rows {
@@ -130,8 +201,23 @@ fn parse_results(result_html: &str) -> Vec<CourseResult> {
             continue;
         }
 
-        let cell_selector = Selector::parse("td").unwrap();
         let cells: Vec<ElementRef> = row.select(&cell_selector).collect();
+
+        if cells.len() == 1
+            && cells[0]
+                .value()
+                .attr("class")
+                .unwrap_or_default()
+                .contains("level02")
+        {
+            let name: String = cells[0].text().collect();
+            sub_course_id = course_id_regex
+                .find(&name)
+                .map(|s| s.as_str().trim().to_owned());
+            sub_course_name = course_id_regex.replace_all(&name, "").trim().to_owned();
+
+            continue;
+        }
 
         if cells.len() < 6 {
             continue;
@@ -148,30 +234,85 @@ fn parse_results(result_html: &str) -> Vec<CourseResult> {
             continue;
         }
 
-        // Initial parsing:
-        let course_id: String = cells[0].text().collect();
-        let course_name: String = cells[1].text().map(|text_part| text_part.trim()).collect();
+        // Parsing
+        let course_id = sub_course_id.clone().unwrap_or(main_course_id.clone());
+        let course_name = if sub_course_name == "Modulabschlussleistungen" {
+            main_course_name.clone()
+        } else {
+            sub_course_name.clone()
+        };
 
-        let title = cells[5]
-            .select(&img_selector)
-            .next()
-            .map(|img| img.value().attr("title").unwrap_or("offen"));
-        let scored = title.unwrap_or("offen").to_lowercase() != "offen";
-
-        // Value fixing:
-        // Dualis is so bad that they use xml/html comments inside a javascript script tag LMAO
-        // Replace line endings so everything is a single line for the regex that strips out xml/html comments.
-        let course_name = course_name.replace('\n', "");
-        let course_name = course_name_replace_regex
-            .replace_all(&course_name, "")
-            .to_string();
+        let points: String = cells[3].text().collect();
+        let scored = !points.is_empty() && !points.contains("noch nicht");
 
         let course_result = CourseResult::new(course_id, course_name, scored);
         results.push(course_result);
     }
 
-    println!("Successfully parsed {} results!", results.len());
     results
+}
+
+fn get_course_results(
+    client: &Client,
+    auth_arguments: &str,
+) -> Result<Vec<CourseResult>, Box<dyn std::error::Error>> {
+    let overview_html = fetch_overview(&client, auth_arguments)?;
+    let semesters = parse_semesters(&overview_html);
+    let mut results = vec![];
+
+    for semester in semesters.iter() {
+        println!("Fetching semester {}...", semester.name);
+        let details_html = fetch_semester_details(&client, auth_arguments, semester)?;
+
+        let course_urls = parse_semester_details(&details_html);
+        for course_path in course_urls.iter() {
+            let course_html = fetch_course_results(&client, &course_path)?;
+            let course_results = parse_course_results(&course_html);
+
+            results.extend(course_results);
+        }
+    }
+
+    // make sure that results are unique by id
+    let mut unique_results = vec![];
+    for result in results.iter() {
+        if unique_results
+            .iter()
+            .find(|r: &&CourseResult| r.course_id == result.course_id)
+            .is_none()
+        {
+            unique_results.push(result.clone());
+        }
+    }
+
+    Ok(unique_results)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv()?;
+
+    let client = ClientBuilder::new().cookie_store(true).build()?;
+    let auth_arguments = login(&client)?;
+
+    let results = get_course_results(&client, &auth_arguments)?;
+
+    for result in results.iter() {
+        println!("{result}");
+    }
+
+    let old_results = load_results();
+    if let Some(old_results) = old_results {
+        let changes = diff_results(&old_results, &results);
+        for change in changes {
+            handle_newly_scored_course(change)
+        }
+    } else {
+        println!("No saved results found. Not looking for changes.");
+    }
+
+    save_results(&results)?;
+
+    Ok(())
 }
 
 fn handle_newly_scored_course(cr: &CourseResult) {
@@ -183,38 +324,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_results() {
-        let html = include_str!("../test_data/results.html");
-        let results = parse_results(html);
-        assert_eq!(results.len(), 23);
+    fn test_parse_semester_details() {
+        let html = include_str!("../test_data/semester_details.html");
+        let course_urls = parse_semester_details(html);
 
-        assert_eq!(
-            results,
-            vec![
-                CourseResult::new("T3INF1001".to_string(), "Mathematik I".to_string(), false),
-                CourseResult::new("T3INF1002".to_string(), "Theoretische Informatik I".to_string(), true),
-                CourseResult::new("T3INF1003".to_string(), "Theoretische Informatik II".to_string(), false),
-                CourseResult::new("T3INF1004".to_string(), "Programmieren".to_string(), false),
-                CourseResult::new("T3INF1005".to_string(), "Schlüsselqualifikationen".to_string(), false),
-                CourseResult::new("T3INF1006".to_string(), "Technische Informatik I".to_string(), false),
-                CourseResult::new("T3INF2001".to_string(), "Mathematik II".to_string(), false),
-                CourseResult::new("T3INF2002".to_string(), "Theoretische Informatik III".to_string(), false),
-                CourseResult::new("T3INF2003".to_string(), "Software Engineering I".to_string(), false),
-                CourseResult::new("T3INF2004".to_string(), "Datenbanken".to_string(), false),
-                CourseResult::new("T3INF2005".to_string(), "Technische Informatik II".to_string(), false),
-                CourseResult::new("T3INF2006".to_string(), "Kommunikations- und Netztechnik".to_string(), false),
-                CourseResult::new("T3INF3001".to_string(), "Software Engineering II".to_string(), false),
-                CourseResult::new("T3INF3002".to_string(), "IT-Sicherheit".to_string(), false),
-                CourseResult::new("T3_3101".to_string(), "Studienarbeit".to_string(), false),
-                CourseResult::new("T3_1000".to_string(), "Praxisprojekt I".to_string(), false),
-                CourseResult::new("T3_2000".to_string(), "Praxisprojekt II".to_string(), false),
-                CourseResult::new("T3_3000".to_string(), "Praxisprojekt III".to_string(), false),
-                CourseResult::new("T3INF4101".to_string(), "Web Engineering".to_string(), false),
-                CourseResult::new("T3INF4103".to_string(), "Anwendungsprojekt Informatik".to_string(), false),
-                CourseResult::new("T3INF4305".to_string(), "Softwarequalität und Verteilte Systeme".to_string(), false),
-                CourseResult::new("T3INF4304".to_string(), "Datenbanken II".to_string(), false),
-                CourseResult::new("T3_3300".to_string(), "Bachelorarbeit".to_string(), false),
-            ]
-        );
+        assert_eq!(course_urls.len(), 8);
+        assert_eq!(course_urls, vec![
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N380913492536419,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N381934466869103,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N380913840065009,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N380914243305413,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N381934623749891,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N382213482644004,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N380914104617007,-N000000015098000",
+            "/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=RESULTDETAILS&ARGUMENTS=-N796098644273095,-N000019,-N380914015873077,-N000000015098000",
+        ]);
+    }
+
+    #[test]
+    fn test_parse_course_results_single() {
+        let html = include_str!("../test_data/result_details_single.html");
+        let results = parse_course_results(html);
+
+        assert_eq!(results, vec![
+            CourseResult {
+                course_id: "T3INF1002".into(),
+                course_name: "Theoretische Informatik I (WiSe 2021/22)".into(),
+                scored: true,
+            },
+        ]);
+    }
+
+    #[test]
+    fn test_parse_course_results_multiple() {
+        let html = include_str!("../test_data/result_details_multiple.html");
+        let results = parse_course_results(html);
+
+        assert_eq!(results, vec![
+            CourseResult {
+                course_id: "T3INF1002".into(),
+                course_name: "Theoretische Informatik I".into(),
+                scored: true,
+            },
+        ]);
     }
 }

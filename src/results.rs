@@ -1,9 +1,9 @@
-use std::{fs::File, io::BufReader, path::Path};
 use serde::{Deserialize, Serialize};
+use std::{fmt, fs::File, io::BufReader, path::Path};
 
 const FILE_PATH: &str = "./dualis_results.json";
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Clone)]
 pub struct CourseResult {
     pub course_id: String,
     pub course_name: String,
@@ -17,6 +17,16 @@ impl CourseResult {
             course_name,
             scored,
         }
+    }
+}
+
+impl fmt::Display for CourseResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "id: {}, name: {}, scored: {}",
+            self.course_id, self.course_name, self.scored
+        )
     }
 }
 
@@ -85,7 +95,9 @@ mod tests {
         ];
         let changed = diff_results(&old, &new);
         assert_eq!(changed.len(), 1);
-        assert_eq!(changed[0], &CourseResult::new("1".to_string(), "Test".to_string(), true));
+        assert_eq!(
+            changed[0],
+            &CourseResult::new("1".to_string(), "Test".to_string(), true)
+        );
     }
 }
-
