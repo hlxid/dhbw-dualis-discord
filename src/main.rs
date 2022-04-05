@@ -156,8 +156,7 @@ fn parse_semester_details(details_html: &str) -> Vec<String> {
     let a_tags = document.select(&selector);
 
     a_tags
-        .map(|tag| tag.value().attr("href"))
-        .flatten()
+        .filter_map(|tag| tag.value().attr("href"))
         .map(|s| s.to_string())
         .collect()
 }
@@ -235,7 +234,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
         }
 
         // Parsing
-        let course_id = sub_course_id.clone().unwrap_or(main_course_id.clone());
+        let course_id = sub_course_id.clone().unwrap_or_else(|| main_course_id.clone());
         let course_name = if sub_course_name == "Modulabschlussleistungen" {
             main_course_name.clone()
         } else {
@@ -256,17 +255,17 @@ fn get_course_results(
     client: &Client,
     auth_arguments: &str,
 ) -> Result<Vec<CourseResult>, Box<dyn std::error::Error>> {
-    let overview_html = fetch_overview(&client, auth_arguments)?;
+    let overview_html = fetch_overview(client, auth_arguments)?;
     let semesters = parse_semesters(&overview_html);
     let mut results = vec![];
 
     for semester in semesters.iter() {
         println!("Fetching semester {}...", semester.name);
-        let details_html = fetch_semester_details(&client, auth_arguments, semester)?;
+        let details_html = fetch_semester_details(client, auth_arguments, semester)?;
 
         let course_urls = parse_semester_details(&details_html);
         for course_path in course_urls.iter() {
-            let course_html = fetch_course_results(&client, &course_path)?;
+            let course_html = fetch_course_results(client, course_path)?;
             let course_results = parse_course_results(&course_html);
 
             results.extend(course_results);
@@ -276,10 +275,9 @@ fn get_course_results(
     // make sure that results are unique by id
     let mut unique_results = vec![];
     for result in results.iter() {
-        if unique_results
+        if !unique_results
             .iter()
-            .find(|r: &&CourseResult| r.course_id == result.course_id)
-            .is_none()
+            .any(|r: &CourseResult| r.course_id == result.course_id)
         {
             unique_results.push(result.clone());
         }
@@ -362,10 +360,15 @@ mod tests {
 
         assert_eq!(results, vec![
             CourseResult {
-                course_id: "T3INF1002".into(),
-                course_name: "Theoretische Informatik I".into(),
-                scored: true,
+                course_id: "T3INF1001.1".into(),
+                course_name: "Lineare Algebra (MOS-TINF21B)".into(),
+                scored: false,
             },
+            CourseResult {
+                course_id: "T3INF1001.2".into(),
+                course_name: "Analysis (MOS-TINF21B)".into(),
+                scored: false,
+            }
         ]);
     }
 }
