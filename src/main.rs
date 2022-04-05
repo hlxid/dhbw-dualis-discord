@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dotenv::dotenv;
 use regex::Regex;
 use reqwest::blocking::{Client, ClientBuilder};
@@ -88,7 +90,10 @@ fn fetch_semester_details(
     auth_arguments: &str,
     semester: &Semester,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    println!("Fetching result details of semester {} ({})...", semester.name, semester.id);
+    println!(
+        "Fetching result details of semester {} ({})...",
+        semester.name, semester.id
+    );
 
     let url = format!("{BASE_URL}/scripts/mgrqispi.dll?APPNAME=CampusNet&PRGNAME=COURSERESULTS&ARGUMENTS={auth_arguments}-N{}", semester.id);
 
@@ -234,7 +239,9 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
         }
 
         // Parsing
-        let course_id = sub_course_id.clone().unwrap_or_else(|| main_course_id.clone());
+        let course_id = sub_course_id
+            .clone()
+            .unwrap_or_else(|| main_course_id.clone());
         let course_name = if sub_course_name == "Modulabschlussleistungen" {
             main_course_name.clone()
         } else {
@@ -302,7 +309,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(old_results) = old_results {
         let changes = diff_results(&old_results, &results);
         for change in changes {
-            handle_newly_scored_course(change)
+            handle_newly_scored_course(&client, change)
         }
     } else {
         println!("No saved results found. Not looking for changes.");
@@ -313,8 +320,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle_newly_scored_course(cr: &CourseResult) {
-    println!("Newly scored: {}", cr.course_name);
+fn handle_newly_scored_course(client: &Client, result: &CourseResult) {
+    println!("Newly scored course: {}", result);
+
+    // get webhook url or print a warning message that it is missing or empty
+    let webhook_url = std::env::var("DISCORD_WEBHOOK").ok();
+    if webhook_url.is_none() || webhook_url.as_ref().unwrap().is_empty() {
+        println!("DISCORD_WEBHOOK is not set. Not sending webhook.");
+        return;
+    }
+    let webhook_url = webhook_url.unwrap();
+
+    // Send discord webhook request
+    let mut payload = HashMap::new();
+    payload.insert("content", format!("Neue Ergebnise in Dualis eingetragen: {} ({})", result.course_name, result.course_id));
+
+    let response = client.post(&webhook_url).json(&payload).send().unwrap();
+
+    if !response.status().is_success() {
+        panic!(
+            "Error sending discord webhook: {}",
+            response.text().unwrap()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -344,13 +372,14 @@ mod tests {
         let html = include_str!("../test_data/result_details_single.html");
         let results = parse_course_results(html);
 
-        assert_eq!(results, vec![
-            CourseResult {
+        assert_eq!(
+            results,
+            vec![CourseResult {
                 course_id: "T3INF1002".into(),
                 course_name: "Theoretische Informatik I (WiSe 2021/22)".into(),
                 scored: true,
-            },
-        ]);
+            },]
+        );
     }
 
     #[test]
@@ -358,17 +387,20 @@ mod tests {
         let html = include_str!("../test_data/result_details_multiple.html");
         let results = parse_course_results(html);
 
-        assert_eq!(results, vec![
-            CourseResult {
-                course_id: "T3INF1001.1".into(),
-                course_name: "Lineare Algebra (MOS-TINF21B)".into(),
-                scored: false,
-            },
-            CourseResult {
-                course_id: "T3INF1001.2".into(),
-                course_name: "Analysis (MOS-TINF21B)".into(),
-                scored: false,
-            }
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                CourseResult {
+                    course_id: "T3INF1001.1".into(),
+                    course_name: "Lineare Algebra (MOS-TINF21B)".into(),
+                    scored: false,
+                },
+                CourseResult {
+                    course_id: "T3INF1001.2".into(),
+                    course_name: "Analysis (MOS-TINF21B)".into(),
+                    scored: false,
+                }
+            ]
+        );
     }
 }
