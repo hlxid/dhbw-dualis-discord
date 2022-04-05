@@ -333,7 +333,13 @@ fn handle_newly_scored_course(client: &Client, result: &CourseResult) {
 
     // Send discord webhook request
     let mut payload = HashMap::new();
-    payload.insert("content", format!("Neue Ergebnise in Dualis eingetragen: {} ({})", result.course_name, result.course_id));
+    let mut embeds = vec![];
+    let mut embed = HashMap::new();
+    embed.insert("title", format!("Neue Ergebnisse in Dualis eingetragen:\n{} ({})", result.course_name, result.course_id));
+    // embed.insert("description", "test123".into());
+    embed.insert("color", "15158332".to_owned());
+    embeds.push(embed);
+    payload.insert("embeds", embeds);
 
     let response = client.post(&webhook_url).json(&payload).send().unwrap();
 
