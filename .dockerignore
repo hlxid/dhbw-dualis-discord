@@ -1,0 +1,4 @@
+/target/
+/dualis_results.json
+/.env
+/Dockerfile
