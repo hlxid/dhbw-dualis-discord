@@ -42,7 +42,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Build Container Image
-      run: DOCKER_BUILDKIT=1 docker build . -t ghcr.io/daniel0611/dhbw-dualis:latest
+      run: DOCKER_BUILDKIT=1 docker build . -t ghcr.io/daniel0611/dhbw-dualis-discord:latest
 
     - name: Log in to GHCR
       if: github.ref == 'refs/heads/main'
@@ -50,4 +50,4 @@ jobs:
 
     - name: Push Container Image
       if: github.ref == 'refs/heads/main'
-      run: docker push ghcr.io/daniel0611/dhbw-dualis:latest
+      run: docker push ghcr.io/daniel0611/dhbw-dualis-discord:latest

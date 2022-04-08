@@ -161,7 +161,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dhbw_dualis"
+name = "dhbw_dualis_discord"
 version = "0.1.0"
 dependencies = [
  "dotenv",

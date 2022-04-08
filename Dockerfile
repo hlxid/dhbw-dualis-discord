@@ -7,7 +7,7 @@ RUN cargo build --release
 
 FROM debian
 
-LABEL org.opencontainers.image.source = "https://github.com/daniel0611/DHBW-Dualis"
+LABEL org.opencontainers.image.source = "https://github.com/daniel0611/dhbw-dualis-discord"
 WORKDIR /data
 
 RUN apt update && apt install ca-certificates -y && rm -rf /var/lib/apt/lists/*
