@@ -15,4 +15,4 @@ RUN apt update && apt install ca-certificates -y && rm -rf /var/lib/apt/lists/*
 RUN mkdir /app
 COPY --from=build /app/target/release/dhbw_dualis_discord /app
 
-CMD [ "/app/dhbw_dualis" ]
+CMD [ "/app/dhbw_dualis_discord" ]
