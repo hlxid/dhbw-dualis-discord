@@ -18,6 +18,10 @@ impl CourseResult {
             scored,
         }
     }
+
+    pub fn is_same_course(&self, other: &CourseResult) -> bool {
+        self.course_id == other.course_id && self.course_name == other.course_name
+    }
 }
 
 impl fmt::Display for CourseResult {
@@ -99,5 +103,17 @@ mod tests {
             changed[0],
             &CourseResult::new("1".to_string(), "Test".to_string(), true)
         );
+    }
+
+    #[test]
+    fn test_diff_results_new_unscored() {
+        let old = vec![];
+        let new = vec![CourseResult::new(
+            "7".to_string(),
+            "Test".to_string(),
+            false,
+        )];
+        let changed = diff_results(&old, &new);
+        assert_eq!(changed.len(), 0);
     }
 }

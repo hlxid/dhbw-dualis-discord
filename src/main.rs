@@ -195,7 +195,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
         .to_owned();
 
     let mut sub_course_id = None;
-    let mut sub_course_name = String::default();
+    let mut sub_course_name = None;
 
     let table_rows = document.select(&table_rows_selector);
     for row in table_rows {
@@ -218,12 +218,12 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
             sub_course_id = course_id_regex
                 .find(&name)
                 .map(|s| s.as_str().trim().to_owned());
-            sub_course_name = course_id_regex.replace_all(&name, "").trim().to_owned();
+            sub_course_name = Some(course_id_regex.replace_all(&name, "").trim().to_owned());
 
             continue;
         }
 
-        if cells.len() < 6 {
+        if cells.len() < 4 {
             continue;
         }
 
@@ -242,10 +242,15 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
         let course_id = sub_course_id
             .clone()
             .unwrap_or_else(|| main_course_id.clone());
+
+        let sub_course_name = sub_course_name
+            .clone()
+            .unwrap_or_else(|| cells[1].text().collect());
+
         let course_name = if sub_course_name == "Modulabschlussleistungen" {
             main_course_name.clone()
         } else {
-            sub_course_name.clone()
+            format!("{main_course_name} {sub_course_name}")
         };
 
         let points: String = cells[3].text().collect();
@@ -279,14 +284,19 @@ fn get_course_results(
         }
     }
 
-    // make sure that results are unique by id
+    // Filter results that occur more than once
     let mut unique_results = vec![];
     for result in results.iter() {
         if !unique_results
-            .iter()
-            .any(|r: &CourseResult| r.course_id == result.course_id)
+        .iter()
+        .any(|r: &CourseResult| r.is_same_course(result))
         {
-            unique_results.push(result.clone());
+            let scored = results.iter().filter(|r| r.is_same_course(result))
+                .filter(|r| r.scored)
+                .count() > 0;
+            let mut result = result.clone();
+            result.scored = scored;
+            unique_results.push(result);
         }
     }
 
@@ -335,7 +345,13 @@ fn handle_newly_scored_course(client: &Client, result: &CourseResult) {
     let mut payload = HashMap::new();
     let mut embeds = vec![];
     let mut embed = HashMap::new();
-    embed.insert("title", format!("Neue Ergebnisse in Dualis eingetragen:\n{} ({})", result.course_name, result.course_id));
+    embed.insert(
+        "title",
+        format!(
+            "Neue Ergebnisse in Dualis eingetragen:\n{} ({})",
+            result.course_name, result.course_id
+        ),
+    );
     // embed.insert("description", "test123".into());
     embed.insert("color", "15158332".to_owned());
     embeds.push(embed);
@@ -344,10 +360,17 @@ fn handle_newly_scored_course(client: &Client, result: &CourseResult) {
     let response = client.post(&webhook_url).json(&payload).send().unwrap();
 
     if !response.status().is_success() {
-        panic!(
-            "Error sending discord webhook: {}",
-            response.text().unwrap()
-        );
+        if response.status() == 429 {
+            let retry_after = response.headers().get("Retry-After").unwrap();
+            let retry_after = retry_after.to_str().unwrap().parse().unwrap();
+            println!("Discord webhook rate limit reached. Continuing after {retry_after} seconds.");
+            std::thread::sleep(std::time::Duration::from_secs(retry_after));
+        } else {
+            panic!(
+                "Error sending discord webhook: {}",
+                response.text().unwrap()
+            );
+        }
     }
 }
 
