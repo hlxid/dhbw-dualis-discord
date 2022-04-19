@@ -254,6 +254,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
         };
 
         let points: String = cells[3].text().collect();
+        let points = points.trim().to_owned();
         let scored = !points.is_empty() && !points.contains("noch nicht");
 
         let course_result = CourseResult::new(course_id, course_name, scored);
@@ -288,12 +289,15 @@ fn get_course_results(
     let mut unique_results = vec![];
     for result in results.iter() {
         if !unique_results
-        .iter()
-        .any(|r: &CourseResult| r.is_same_course(result))
+            .iter()
+            .any(|r: &CourseResult| r.is_same_course(result))
         {
-            let scored = results.iter().filter(|r| r.is_same_course(result))
+            let scored = results
+                .iter()
+                .filter(|r| r.is_same_course(result))
                 .filter(|r| r.scored)
-                .count() > 0;
+                .count()
+                > 0;
             let mut result = result.clone();
             result.scored = scored;
             unique_results.push(result);
