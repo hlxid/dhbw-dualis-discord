@@ -223,7 +223,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
             continue;
         }
 
-        if cells.len() < 4 {
+        if cells.len() < 5 {
             continue;
         }
 
@@ -255,7 +255,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
 
         let points: String = cells[3].text().collect();
         let points = points.trim().to_owned();
-        let scored = !points.is_empty() && !points.contains("noch nicht");
+        let scored = !(points.is_empty() || points.contains("noch nicht"));
 
         let course_result = CourseResult::new(course_id, course_name, scored);
         results.push(course_result);
@@ -405,7 +405,7 @@ mod tests {
         let html = include_str!("../test_data/result_details_single.html");
         let results = parse_course_results(html);
 
-        assert_eq!(
+            assert_eq!(
             results,
             vec![CourseResult {
                 course_id: "T3INF1002".into(),
@@ -425,12 +425,12 @@ mod tests {
             vec![
                 CourseResult {
                     course_id: "T3INF1001.1".into(),
-                    course_name: "Lineare Algebra (MOS-TINF21B)".into(),
+                    course_name: "Mathematik I (WiSe 2021/22) Lineare Algebra (MOS-TINF21B)".into(),
                     scored: false,
                 },
                 CourseResult {
                     course_id: "T3INF1001.2".into(),
-                    course_name: "Analysis (MOS-TINF21B)".into(),
+                    course_name: "Mathematik I (WiSe 2021/22) Analysis (MOS-TINF21B)".into(),
                     scored: false,
                 }
             ]
