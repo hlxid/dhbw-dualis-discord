@@ -171,7 +171,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
     let table_rows_selector = Selector::parse("table tr").unwrap();
     let cell_selector = Selector::parse("td").unwrap();
     let h1_selector = Selector::parse("h1").unwrap();
-    let course_id_regex = Regex::new(r"[A-Z0-9]+[0-9]{4}(\.[0-9]{1,2})?").unwrap();
+    let course_id_regex = Regex::new(r"[A-Z0-9]+[0-9]{4}(\.[0-9]{1,2})?|([A-Z][0-9]_[0-9]{4})").unwrap();
 
     let document = Html::parse_document(results_html);
     let mut results = Vec::new();
