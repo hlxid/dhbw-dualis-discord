@@ -172,6 +172,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
     let cell_selector = Selector::parse("td").unwrap();
     let h1_selector = Selector::parse("h1").unwrap();
     let course_id_regex = Regex::new(r"[A-Z0-9]+[0-9]{4}(\.[0-9]{1,2})?|([A-Z][0-9]_[0-9]{4})").unwrap();
+    let split_course_portion = Regex::new(r"\(\d+%?\)$").unwrap();
 
     let document = Html::parse_document(results_html);
     let mut results = Vec::new();
@@ -197,6 +198,8 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
     let mut sub_course_id = None;
     let mut sub_course_name = None;
 
+    let mut split_single_course_index = 1;
+
     let table_rows = document.select(&table_rows_selector);
     for row in table_rows {
         // Filter useless rows
@@ -220,6 +223,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
                 .map(|s| s.as_str().trim().to_owned());
             sub_course_name = Some(course_id_regex.replace_all(&name, "").trim().to_owned());
 
+            split_single_course_index = 1;
             continue;
         }
 
@@ -236,6 +240,17 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
                 .contains("tbdata")
         }) {
             continue;
+        }
+
+        // Handle split courses, identifiable by a non breaking space
+        if cells[0].text().collect::<String>() == "\u{00a0}" {
+            sub_course_id = Some(format!("{}.{}", main_course_id, split_single_course_index));
+            sub_course_name = Some(split_course_portion.replace(
+                cells[1].text().collect::<String>().trim(),
+                ""
+            ).into_owned());
+
+            split_single_course_index += 1;
         }
 
         // Parsing
@@ -433,6 +448,33 @@ mod tests {
                     course_name: "Mathematik I (WiSe 2021/22) Analysis (MOS-TINF21B)".into(),
                     scored: false,
                 }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_course_results_single_split() {
+        let html = include_str!("../test_data/result_details_single_split.html");
+        let results = parse_course_results(html);
+
+        assert_eq!(
+            results,
+            vec![
+                CourseResult {
+                    course_id: "T3INF4303".into(),
+                    course_name: "Computergraphik und Bildverarbeitung (SoSe 2022)".into(),
+                    scored: true,
+                },
+                CourseResult {
+                    course_id: "T3INF4303.1".into(),
+                    course_name: "Computergraphik und Bildverarbeitung (SoSe 2022) Digitale Bildverarbeitung - Klausur und Projekt".into(),
+                    scored: true,
+                },
+                CourseResult {
+                    course_id: "T3INF4303.2".into(),
+                    course_name: "Computergraphik und Bildverarbeitung (SoSe 2022) Computergrafik".into(),
+                    scored: true,
+                },
             ]
         );
     }

@@ -65,6 +65,9 @@ pub fn diff_results<'a>(old: &[CourseResult], new: &'a [CourseResult]) -> Vec<&'
             .iter()
             .find(|old_entry| old_entry.course_id == entry.course_id);
         if old_entry.is_none() {
+            if entry.scored {
+                changed.push(entry);
+            }
             continue;
         }
 
