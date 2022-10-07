@@ -323,7 +323,7 @@ fn get_course_results(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv()?;
+    dotenv().ok();
 
     let client = ClientBuilder::new().cookie_store(true).build()?;
     let auth_arguments = login(&client)?;
