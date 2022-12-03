@@ -1,3 +1,5 @@
+### :warning: not in active use anymore and therefore not maintained. Could break in the future
+
 # dhbw-dualis-discord
 
 This is a tool that scrapes the [DUALIS](https://dualis.dhbw.de/) website of DHBW and posts a message into a Discord channel when the point results of a course are entered.
