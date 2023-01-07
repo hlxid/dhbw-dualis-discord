@@ -376,7 +376,7 @@ fn handle_newly_scored_course(client: &Client, result: &CourseResult) {
     embeds.push(embed);
     payload.insert("embeds", embeds);
 
-    let response = client.post(&webhook_url).json(&payload).send().unwrap();
+    let response = client.post(webhook_url).json(&payload).send().unwrap();
 
     if !response.status().is_success() {
         if response.status() == 429 {
