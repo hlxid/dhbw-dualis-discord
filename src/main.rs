@@ -244,7 +244,7 @@ fn parse_course_results(results_html: &str) -> Vec<CourseResult> {
 
         // Handle split courses, identifiable by a non breaking space
         if cells[0].text().collect::<String>() == "\u{00a0}" {
-            sub_course_id = Some(format!("{}.{}", main_course_id, split_single_course_index));
+            sub_course_id = Some(format!("{main_course_id}.{split_single_course_index}"));
             sub_course_name = Some(split_course_portion.replace(
                 cells[1].text().collect::<String>().trim(),
                 ""
@@ -350,7 +350,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn handle_newly_scored_course(client: &Client, result: &CourseResult) {
-    println!("Newly scored course: {}", result);
+    println!("Newly scored course: {result}");
 
     // get webhook url or print a warning message that it is missing or empty
     let webhook_url = std::env::var("DISCORD_WEBHOOK").ok();
